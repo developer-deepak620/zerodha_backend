@@ -3,14 +3,12 @@ const express = require("express");
 const app = express();
 const mongoose = require("mongoose");
 const cors = require("cors");
-const bodyParser = require("body-parser");
 
 const { isLoggedIn } = require("./middleware");
 const session = require("express-session");
-const MongoStore = require("connect-mongo");
+const MongoStore = require("connect-mongo").default;
 const passport = require("passport");
 const LocalStrategy = require("passport-local");
-
 
 const allowedOrigins = [
   "http://localhost:5173",
@@ -24,17 +22,13 @@ app.use(cors({
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error("Not allowed by CORS"));
+      callback(null, false); // ⚠️ important (no crash)
     }
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 }));
 
-app.options("*", cors({
-  origin: allowedOrigins,
-  credentials: true
-}));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -47,48 +41,45 @@ const { UserModel } = require("./model/UserModel");
 const db_url = process.env.MONGO_URL;
 const port = process.env.PORT || 9876;
 
-// mongoDB connect
-main()
-  .then(() => {
-    console.log("Connected to DB");
-  })
-  .catch((err) => {
-    console.log(err);
-  });
-
-async function main() {
-  await mongoose.connect(db_url);
+if (!db_url) {
+  console.log("MONGO_URL missing");
+  process.exit(1);
 }
 
+mongoose.connect(db_url)
+  .then(() => console.log("Connected to DB"))
+  .catch((err) => console.log(err));
+
+// ---------------- SESSION ----------------
+app.set("trust proxy", 1); // 🔥 IMPORTANT for Render HTTPS
 
 const sessionOptions = {
   store: MongoStore.create({
     mongoUrl: db_url,
     collectionName: "sessions",
-    ttl: 7 * 24 * 60 * 60, // 7 days in seconds
-    touchAfter: 24 * 3600,
+    ttl: 7 * 24 * 60 * 60,
   }),
   secret: process.env.SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: true,
-    sameSite: "none",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    secure: true,   
+    sameSite: "none", 
   },
 };
+
 app.use(session(sessionOptions));
 
-// Passport
+// ---------------- PASSPORT ----------------
 app.use(passport.initialize());
 app.use(passport.session());
 passport.use(new LocalStrategy(UserModel.authenticate()));
-
 passport.serializeUser(UserModel.serializeUser());
 passport.deserializeUser(UserModel.deserializeUser());
 
 
+// SIGNUP
 app.post("/signup", async (req, res, next) => {
   try {
     let { username, email, password } = req.body;
@@ -98,7 +89,6 @@ app.post("/signup", async (req, res, next) => {
 
     req.login(registeredUser, (err) => {
       if (err) return next(err);
-
       res.json({ success: true, user: registeredUser });
     });
   } catch (err) {
@@ -106,28 +96,22 @@ app.post("/signup", async (req, res, next) => {
   }
 });
 
+// LOGIN
 app.post("/login", passport.authenticate("local"), (req, res) => {
-  res.send("Logged in");
+  res.json({ success: true });
 });
 
+// LOGOUT
 app.get("/logout", (req, res) => {
   req.logout(() => {
     req.session.destroy(() => {
       res.clearCookie("connect.sid");
-      res.redirect("https://zerodha-frontend-chi-inky.vercel.app/signup");
+      res.json({ success: true, message: "Logged out" });
     });
   });
 });
 
-app.get("/me", (req, res) => {
-  if (req.isAuthenticated()) {
-    return res.json({ user: req.user });
-  } else {
-    return res.status(401).json({ user: null });
-  }
-});
-
-
+// CHECK AUTH
 app.get("/check", (req, res) => {
   res.json({
     loggedIn: req.isAuthenticated(),
@@ -135,34 +119,28 @@ app.get("/check", (req, res) => {
   });
 });
 
-// today end
-
+// PROTECTED ROUTES
 app.get("/allHoldings", isLoggedIn, async (req, res) => {
-  let allHoldings = await HoldingsModel.find({});
-  res.json(allHoldings);
+  let data = await HoldingsModel.find({});
+  res.json(data);
 });
 
 app.get("/allPositions", isLoggedIn, async (req, res) => {
-  let allPositions = await PositionsModel.find({});
-  res.json(allPositions);
+  let data = await PositionsModel.find({});
+  res.json(data);
 });
 
 app.post("/newOrder", isLoggedIn, async (req, res) => {
-  let newOrder = new OrdersModel({
-    name: req.body.name,
-    qty: req.body.qty,
-    price: req.body.price,
-    mode: req.body.mode,
-  });
-
-  newOrder.save();
-
-  res.send("Order saved");
+  let order = new OrdersModel(req.body);
+  await order.save();
+  res.json({ success: true });
 });
 
 app.get("/allOrders", isLoggedIn, async (req, res) => {
-  let allOrders = await OrdersModel.find({});
-  res.json(allOrders);
+  let data = await OrdersModel.find({});
+  res.json(data);
 });
 
-app.listen(port, () => console.log(`app started at port no ${port}`));
+app.listen(port, "0.0.0.0", () =>
+  console.log(`Server running on ${port}`)
+);
