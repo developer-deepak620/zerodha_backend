@@ -106,7 +106,7 @@ app.get("/logout", (req, res) => {
   req.logout(() => {
     req.session.destroy(() => {
       res.clearCookie("connect.sid");
-      res.json({ success: true, message: "Logged out" });
+      res.redirect("https://zerodha-frontend-chi-inky.vercel.app/");
     });
   });
 });
